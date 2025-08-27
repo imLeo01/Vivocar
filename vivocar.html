@@ -1,0 +1,530 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Vimo Car</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <style>
+    :root{ --bg:#0f1724; --panel:#0b1420; --accent:#2b6be6; --muted:#9fb0cc; --card:#071726; }
+    *{box-sizing:border-box}
+    body{ margin:0; font-family:Inter, Arial, sans-serif; background:#f3f6fb; color:#0b1220; }
+    .app{ display:grid; grid-template-columns:380px 1fr; height:100vh; }
+    .panel{ padding:18px; background:var(--bg); color:#e6eef8; display:flex; flex-direction:column; gap:12px; }
+    h1{ margin:0; font-size:18px }
+    label{ font-size:12px; color:var(--muted) }
+    .card{ background:var(--panel); border-radius:12px; padding:12px; border:1px solid #1e2b3d }
+    input[type="text"], input[type="number"], select { width:100%; padding:8px 10px; border-radius:8px; border:1px solid #203042; background:#07121b; color:#dfeeff }
+    .row{ display:flex; gap:8px }
+    button{ background:var(--accent); border:none; color:white; padding:8px 10px; border-radius:8px; cursor:pointer }
+    button.ghost{ background:transparent; border:1px solid var(--accent); color:#bcd0ff }
+    #map{ width:100%; height:100vh }
+    .muted{ color:var(--muted); font-size:12px }
+    .small{ font-size:13px }
+    .metrics{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; margin-top:8px }
+    .metric{ background:var(--card); padding:8px; border-radius:8px; text-align:center; border:1px solid #1c3347 }
+    .price-big{ font-size:22px; font-weight:800; color:#fff }
+    .history{ max-height:160px; overflow:auto; margin-top:6px }
+    .history-item{ background:#061223; padding:8px; border-radius:6px; margin-bottom:6px; border:1px solid #133148 }
+    .promo{ display:flex; gap:8px; margin-top:8px }
+    .info-line{ display:flex; justify-content:space-between; font-size:13px; color:#cfe0f7; margin-top:6px }
+    .notif{ position:absolute; left:50%; transform:translateX(-50%); top:12px; background:var(--accent); color:#fff; padding:8px 12px; border-radius:8px; display:none; z-index:10000 }
+    .driver-card{ background:#0b1724; border:1px solid #223449; padding:8px; border-radius:8px; color:#dfeeff; margin-top:8px }
+    .btn-danger{ background:#ef4444 }
+    .modal{ position:fixed; left:0; top:0; right:0; bottom:0; display:none; align-items:center; justify-content:center; background: rgba(0,0,0,0.45); z-index:20000 }
+    .modal .box{ background:#fff; color:#000; padding:16px; border-radius:8px; width:360px; max-width:94% }
+    .autocomplete-list{ position:absolute; z-index:12000; background:#fff; color:#061223; border:1px solid #cbd5e1; border-radius:6px; max-height:220px; overflow:auto; width:100% }
+    .autocomplete-item{ padding:8px; border-bottom:1px solid #eef2f7; cursor:pointer }
+    .footer-note{ color:var(--muted); font-size:12px; margin-top:10px }
+    /* small responsive */
+    @media (max-width:900px){ .app{ grid-template-columns:1fr; } #map{ height:60vh } }
+  </style>
+</head>
+<body>
+  <div class="notif" id="notif"></div>
+
+  <div class="app">
+    <aside class="panel">
+      <div>
+        <h1>Vimo Car — Demo</h1>
+        <div class="muted">Nominatim (geocode/reverse), OSRM (route), Leaflet — mô phỏng tài xế & booking.</div>
+      </div>
+
+      <div class="card">
+        <label>Điểm đón</label>
+        <div style="position:relative">
+          <input id="pickupSearch" type="text" placeholder="Nhập địa điểm..." autocomplete="off"/>
+          <div id="pickup_suggestions" class="autocomplete-list" style="display:none"></div>
+        </div>
+        <div style="height:8px"></div>
+        <label>Điểm đến</label>
+        <div style="position:relative">
+          <input id="dropoffSearch" type="text" placeholder="Nhập địa điểm..." autocomplete="off"/>
+          <div id="dropoff_suggestions" class="autocomplete-list" style="display:none"></div>
+        </div>
+
+        <div style="display:flex; gap:8px; margin-top:10px;">
+          <button id="swapBtn" class="ghost">Đổi</button>
+          <button id="routeBtn">Tính tuyến & Giá</button>
+        </div>
+
+        <div style="margin-top:10px">
+          <label>Chọn phương tiện</label>
+          <select id="vehicleSelect">
+            <option value="bike">Xe máy — 1 người</option>
+            <option value="car" selected>Ô tô 4 chỗ</option>
+            <option value="seven">Ô tô 7 chỗ</option>
+          </select>
+
+          <div style="display:flex; gap:8px; margin-top:8px;">
+            <div style="flex:1">
+              <label>Giao thông (0 thoáng → 10 kẹt)</label>
+              <input id="trafficRange" type="range" min="0" max="10" value="4" />
+              <div class="muted small">Giá trị: <span id="trafficVal">4</span></div>
+            </div>
+            <div style="width:12px"></div>
+            <div style="width:120px">
+              <label>Phí chờ (phút)</label>
+              <input id="waitMin" type="number" min="0" value="0" />
+            </div>
+          </div>
+
+          <div class="promo">
+            <input id="promoCode" type="text" placeholder="Mã khuyến mãi (SAVE10)" />
+            <button id="applyPromo" class="ghost">Áp dụng</button>
+          </div>
+
+          <div class="info-line"><div class="muted">Phí chờ/ phút:</div><div id="waitFee" class="muted">5k</div></div>
+        </div>
+
+        <div id="driverInfo" class="driver-card" style="display:none">
+          <div id="driverName">Tài xế: —</div>
+          <div id="driverCar">Xe: —</div>
+          <div id="driverPlate">Biển số: —</div>
+          <div style="margin-top:8px; display:flex; gap:8px">
+            <button id="bookConfirmBtn">Gọi xe</button>
+            <button id="cancelBtn" class="btn-danger">Hủy chuyến</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="metrics">
+          <div class="metric"><div class="muted">Khoảng cách (km)</div><div id="distKm" class="small">—</div></div>
+          <div class="metric"><div class="muted">Thời gian (min)</div><div id="timeMin" class="small">—</div></div>
+          <div class="metric"><div class="muted">Giá ước tính (k)</div><div id="priceEst" class="price-big">—</div></div>
+        </div>
+
+        <div style="margin-top:8px">
+          <div class="muted small">Phân tích giá</div>
+          <div id="breakdown" style="margin-top:6px; color:#cfe0f7; font-size:13px">—</div>
+        </div>
+
+        <div style="display:flex; gap:8px; margin-top:10px">
+          <button id="bookBtn">Đặt xe (mô phỏng)</button>
+          <button id="clearHistory" class="ghost">Xóa lịch sử</button>
+        </div>
+
+        <div style="margin-top:10px">
+          <div class="muted small">Lịch sử (local)</div>
+          <div id="history" class="history"></div>
+        </div>
+      </div>
+
+      <div class="footer-note">Gõ địa điểm → chọn gợi ý. Click bản đồ: <b>Shift+Click</b> đặt điểm đón, <b>Click</b> đặt điểm đến.</div>
+    </aside>
+
+    <div id="map"></div>
+  </div>
+
+  <!-- Leaflet -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+  // ---------- CONFIG ----------
+  const OSRM_BASE = 'https://router.project-osrm.org';
+  const NOMINATIM_BASE = 'https://nominatim.openstreetmap.org/search';
+  const NOMINATIM_REVERSE = 'https://nominatim.openstreetmap.org/reverse';
+  const WAIT_FEE_PER_MIN = 5; // 5k / min
+  const VEHICLE_MULT = { bike:0.55, car:1.0, seven:1.45 };
+  const PROMOS = { 'SAVE10':0.10, 'HALF50':0.5 };
+
+  const DRIVER_POOL = [
+    {name:'Nguyễn An', car:'Toyota Vios', plate:'51A-12345'},
+    {name:'Trần Bình', car:'Honda Wave', plate:'59C-67890'},
+    {name:'Lê Cường', car:'Hyundai Accent', plate:'52F-11122'},
+    {name:'Phạm Duy', car:'Kia Carnival', plate:'50X-99887'},
+    {name:'Hoàng Mai', car:'Suzuki', plate:'54B-55667'}
+  ];
+
+  // icons per vehicle (reliable PNGs)
+  const ICONS = {
+    bike: L.icon({ iconUrl: 'https://img.icons8.com/ios-filled/50/motorcycle.png', iconSize:[36,36], iconAnchor:[18,18] }),
+    car: L.icon({ iconUrl: 'https://cdn-icons-png.flaticon.com/512/296/296216.png', iconSize:[36,36], iconAnchor:[18,18] }),
+    seven: L.icon({ iconUrl: 'https://cdn-icons-png.flaticon.com/512/296/296216.png', iconSize:[36,36], iconAnchor:[18,18] })
+  };
+
+  // ---------- MAP ----------
+  const map = L.map('map').setView([10.7769, 106.7009], 13);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution:'© OpenStreetMap contributors' }).addTo(map);
+
+  // ---------- STATE ----------
+  let pickupMarker=null, dropoffMarker=null, routeLine=null, driverMarker=null, driverInterval=null;
+  let driverData=null, bookingActive=false;
+
+  // ---------- UI ----------
+  const ui = {
+    pickupSearch: document.getElementById('pickupSearch'),
+    dropoffSearch: document.getElementById('dropoffSearch'),
+    pickupSug: document.getElementById('pickup_suggestions'),
+    dropoffSug: document.getElementById('dropoff_suggestions'),
+    swapBtn: document.getElementById('swapBtn'),
+    routeBtn: document.getElementById('routeBtn'),
+    vehicleSelect: document.getElementById('vehicleSelect'),
+    trafficRange: document.getElementById('trafficRange'),
+    trafficVal: document.getElementById('trafficVal'),
+    waitMin: document.getElementById('waitMin'),
+    promoCode: document.getElementById('promoCode'),
+    applyPromo: document.getElementById('applyPromo'),
+    driverInfo: document.getElementById('driverInfo'),
+    driverName: document.getElementById('driverName'),
+    driverCar: document.getElementById('driverCar'),
+    driverPlate: document.getElementById('driverPlate'),
+    bookBtn: document.getElementById('bookBtn'),
+    bookConfirmBtn: document.getElementById('bookConfirmBtn'),
+    cancelBtn: document.getElementById('cancelBtn'),
+    distKm: document.getElementById('distKm'),
+    timeMin: document.getElementById('timeMin'),
+    priceEst: document.getElementById('priceEst'),
+    breakdown: document.getElementById('breakdown'),
+    historyEl: document.getElementById('history'),
+    clearHistory: document.getElementById('clearHistory'),
+    notif: document.getElementById('notif'),
+    waitFeeEl: document.getElementById('waitFee')
+  };
+
+  function showNotif(txt, t=2500){ ui.notif.textContent = txt; ui.notif.style.display='block'; setTimeout(()=> ui.notif.style.display='none', t); }
+
+  // ---------- GEOCODING ----------
+  async function nominatimSearch(q){
+    const url = `${NOMINATIM_BASE}?q=${encodeURIComponent(q)}&format=json&addressdetails=1&limit=6`;
+    const res = await fetch(url, { headers: {'Accept':'application/json'} });
+    if (!res.ok) return [];
+    return await res.json();
+  }
+  function attachAutocomplete(inputEl, listEl, onSelect){
+    let timer=null;
+    inputEl.addEventListener('input', (e)=>{
+      const v = e.target.value.trim();
+      listEl.innerHTML=''; if (v.length<2){ listEl.style.display='none'; return; }
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(async ()=>{
+        const results = await nominatimSearch(v);
+        listEl.innerHTML = results.map(r=> `<div class="autocomplete-item" data-lat="${r.lat}" data-lon="${r.lon}">${r.display_name}</div>`).join('');
+        listEl.style.display = results.length ? 'block' : 'none';
+        listEl.querySelectorAll('.autocomplete-item').forEach(it=> it.addEventListener('click', ()=>{
+          const lat = parseFloat(it.dataset.lat), lon = parseFloat(it.dataset.lon);
+          inputEl.value = it.textContent; listEl.style.display='none';
+          onSelect({lat, lon, display_name: it.textContent});
+        }));
+      }, 300);
+    });
+    document.addEventListener('click', (ev)=>{ if (!inputEl.contains(ev.target) && !listEl.contains(ev.target)) listEl.style.display='none'; });
+  }
+
+  attachAutocomplete(ui.pickupSearch, ui.pickupSug, r=> setPickup([r.lat, r.lon], r.display_name));
+  attachAutocomplete(ui.dropoffSearch, ui.dropoffSug, r=> setDropoff([r.lat, r.lon], r.display_name));
+
+  async function reverseGeocode(lat, lon){
+    try{
+      const url = `${NOMINATIM_REVERSE}?lat=${lat}&lon=${lon}&format=jsonv2`;
+      const res = await fetch(url);
+      if (!res.ok) return null;
+      const j = await res.json(); return j.display_name || null;
+    }catch(e){ return null; }
+  }
+
+  // ---------- MARKERS ----------
+  async function setPickup(latlng, name=null){
+    if (pickupMarker) map.removeLayer(pickupMarker);
+    pickupMarker = L.marker(latlng, { draggable:true }).addTo(map).bindPopup('Điểm đón').openPopup();
+    pickupMarker.on('dragend', async () => {
+      const p = pickupMarker.getLatLng();
+      const nm = await reverseGeocode(p.lat, p.lng);
+      ui.pickupSearch.value = nm || `${p.lat.toFixed(6)}, ${p.lng.toFixed(6)}`;
+      ui.pickupLat = p.lat; ui.pickupLon = p.lng;
+      computeRouteAndPrice();
+    });
+    ui.pickupLat = parseFloat(latlng[0]); ui.pickupLon = parseFloat(latlng[1]);
+    if (name) ui.pickupSearch.value = name;
+    else { const nm = await reverseGeocode(latlng[0], latlng[1]); ui.pickupSearch.value = nm || `${latlng[0].toFixed(6)}, ${latlng[1].toFixed(6)}`; }
+  }
+  async function setDropoff(latlng, name=null){
+    if (dropoffMarker) map.removeLayer(dropoffMarker);
+    dropoffMarker = L.marker(latlng, { draggable:true }).addTo(map).bindPopup('Điểm đến').openPopup();
+    dropoffMarker.on('dragend', async () => {
+      const p = dropoffMarker.getLatLng();
+      const nm = await reverseGeocode(p.lat, p.lng);
+      ui.dropoffSearch.value = nm || `${p.lat.toFixed(6)}, ${p.lng.toFixed(6)}`;
+      ui.dropoffLat = p.lat; ui.dropoffLon = p.lng;
+      computeRouteAndPrice();
+    });
+    ui.dropoffLat = parseFloat(latlng[0]); ui.dropoffLon = parseFloat(latlng[1]);
+    if (name) ui.dropoffSearch.value = name;
+    else { const nm = await reverseGeocode(latlng[0], latlng[1]); ui.dropoffSearch.value = nm || `${latlng[0].toFixed(6)}, ${latlng[1].toFixed(6)}`; }
+  }
+
+  map.on('click', (e)=>{
+    const latlng = [e.latlng.lat, e.latlng.lng];
+    if (e.originalEvent.shiftKey) setPickup(latlng); else setDropoff(latlng);
+  });
+
+  // ---------- OSRM ROUTE ----------
+  async function osrmRoute(pick, drop){
+    // pick [lat,lon] , drop [lat,lon]
+    const url = `${OSRM_BASE}/route/v1/driving/${pick[1]},${pick[0]};${drop[1]},${drop[0]}?overview=full&geometries=geojson&annotations=duration,distance`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error('Route error');
+    const j = await res.json();
+    if (!j.routes || !j.routes[0]) throw new Error('No route');
+    const r = j.routes[0];
+    return { distance_km: r.distance/1000, duration_min: r.duration/60, coords: r.geometry.coordinates.map(c=>[c[1], c[0]]) };
+  }
+
+  // ---------- FUZZY / PRICE ----------
+  function tri(x,a,b,c){ if (x<=a || x>=c) return 0; if (x===b) return 1; if (x>a && x<b) return (x-a)/(b-a); return (c-x)/(c-b); }
+  function fuzzyPriceCalc(distance_km, durationMin, trafficVal, vehicleKey, waitMin, promoPercent){
+    const d_close = tri(distance_km,0,0,3), d_mid = tri(distance_km,2,6,12), d_far = tri(distance_km,8,20,40);
+    const t_clear = tri(trafficVal,0,0,3), t_norm = tri(trafficVal,2,5,8), t_jam = tri(trafficVal,6,10,10);
+    const v_bike = vehicleKey==='bike'?1:0, v_car = vehicleKey==='car'?1:0, v_sev = vehicleKey==='seven'?1:0;
+    const rules = [];
+    rules.push({out:'cheap', act: Math.min(d_close, t_clear)});
+    rules.push({out:'cheap', act: Math.min(d_close, t_norm)});
+    rules.push({out:'exp', act: Math.min(d_far, t_jam)});
+    rules.push({out:'mid', act: Math.min(v_car, d_mid)});
+    rules.push({out:'exp', act: v_sev});
+    rules.push({out:'exp', act: t_jam});
+    rules.push({out:'cheap', act: Math.min(v_bike, t_clear)});
+    rules.push({out:'mid', act: Math.min(d_mid, t_norm)});
+    const Y = Array.from({length:241}, (_,i)=>i+10);
+    const mu = new Array(Y.length).fill(0);
+    function priceCheap(y){ return tri(y,8,15,40); }
+    function priceMid(y){ return tri(y,12,40,120); }
+    function priceExp(y){ return tri(y,80,120,250); }
+    for(const r of rules){
+      for(let i=0;i<Y.length;i++){
+        const yy=Y[i]; let m=0;
+        if(r.out==='cheap') m=priceCheap(yy); else if(r.out==='mid') m=priceMid(yy); else m=priceExp(yy);
+        mu[i] = Math.max(mu[i], Math.min(r.act, m));
+      }
+    }
+    let num=0, den=0;
+    for(let i=0;i<Y.length;i++){ num += Y[i]*mu[i]; den += mu[i]; }
+    const baseCrisp = den>0 ? num/den : 50;
+    const vehMult = VEHICLE_MULT[vehicleKey] || 1.0;
+    const waitFee = WAIT_FEE_PER_MIN * (parseFloat(waitMin)||0);
+    let price_k = baseCrisp * vehMult + waitFee;
+    if (promoPercent && promoPercent>0) price_k = price_k * (1 - promoPercent);
+    price_k = Math.max(10, Math.round(price_k*100)/100);
+    return { price_k, baseCrisp: Math.round(baseCrisp*100)/100, vehMult, waitFee, Y, mu };
+  }
+
+  // ---------- DRIVER SIMULATION ----------
+  function pickRandomDriver(vehicleKey){
+    const d = DRIVER_POOL[Math.floor(Math.random()*DRIVER_POOL.length)];
+    const offsetLat = (Math.random()-0.5)/400, offsetLon = (Math.random()-0.5)/400;
+    return { name:d.name, car:(vehicleKey==='bike'?'Xe máy':d.car), plate:d.plate, lat:(ui.pickupLat||10.7769)+offsetLat, lon:(ui.pickupLon||106.7009)+offsetLon };
+  }
+
+  // simulate along fullPath (array of [lat,lon])
+  function simulateDriverAlong(fullPath){
+    if (driverMarker) map.removeLayer(driverMarker);
+    if (!fullPath || fullPath.length===0) return;
+    let idx=0;
+    const icon = ICONS[ui.vehicleSelect.value] || ICONS.car;
+    driverMarker = L.marker(fullPath[0], { icon }).addTo(map);
+    showNotif('Tài xế đang di chuyển đến điểm đón...');
+    bookingActive = true;
+    ui.driverInfo.style.display = 'block';
+    driverMarker._gotPickup = false;
+    driverMarker._picked = false;
+    const step = Math.max(1, Math.floor(fullPath.length/180));
+    driverInterval = setInterval(()=>{
+      idx = Math.min(fullPath.length-1, idx+step);
+      driverMarker.setLatLng(fullPath[idx]);
+      // approaching pickup
+      const pickupLL = L.latLng(ui.pickupLat, ui.pickupLon);
+      if (!driverMarker._gotPickup && driverMarker.getLatLng().distanceTo(pickupLL) < 35){
+        driverMarker._gotPickup = true;
+        showNotif('Tài xế đã đến điểm đón. Vui lòng lên xe.');
+        setTimeout(()=>{ driverMarker._picked = true; showNotif('Đang di chuyển đến điểm đến...'); }, 1400);
+      }
+      // when picked and near dropoff
+      const dropLL = L.latLng(ui.dropoffLat, ui.dropoffLon);
+      if (driverMarker._picked && driverMarker.getLatLng().distanceTo(dropLL) < 35){
+        clearInterval(driverInterval); driverInterval=null;
+        bookingActive = false;
+        showNotif('Đã đến điểm đến. Cảm ơn bạn!');
+        promptRating();
+        saveHistory({ timestamp: Date.now(), pickup: ui.pickupSearch.value, dropoff: ui.dropoffSearch.value, vehicle: ui.vehicleSelect.value, distance: parseFloat(ui.distKm.textContent)||0, timeMin: parseFloat(ui.timeMin.textContent)||0, price_k: ui.priceEst.textContent });
+        renderHistory();
+      }
+    }, 500);
+  }
+
+  function stopDriverSimulation(reason){
+    if (driverInterval) clearInterval(driverInterval);
+    driverInterval = null;
+    if (driverMarker) { map.removeLayer(driverMarker); driverMarker = null; }
+    ui.driverInfo.style.display = 'none';
+    bookingActive = false;
+    showNotif('Chuyến đã bị hủy: ' + (reason || 'Người dùng hủy'));
+  }
+
+  // ---------- RATING ----------
+  function promptRating(){
+    const modal = document.createElement('div'); modal.className='modal';
+    modal.innerHTML = `<div class="box"><h3>Đánh giá tài xế</h3>
+      <div style="margin:8px 0">Mời bạn đánh giá chuyến đi</div>
+      <div style="display:flex;gap:8px;margin-bottom:8px">${[1,2,3,4,5].map(i=>`<button class="rate">${i}★</button>`).join('')}</div>
+      <textarea id="rateComment" placeholder="Bình luận (tùy chọn)" style="width:100%;height:80px"></textarea>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px"><button id="sendRate">Gửi</button> <button id="closeRate">Đóng</button></div></div>`;
+    document.body.appendChild(modal);
+    modal.style.display='flex';
+    modal.querySelectorAll('.rate').forEach(b=> b.addEventListener('click',(e)=> modal.dataset.rate = e.target.textContent[0]));
+    modal.querySelector('#sendRate').addEventListener('click', ()=>{
+      const r = modal.dataset.rate || '5'; const c = modal.querySelector('#rateComment').value;
+      alert('Cảm ơn đánh giá: ' + r + ' sao\n' + c);
+      modal.remove();
+    });
+    modal.querySelector('#closeRate').addEventListener('click', ()=> modal.remove());
+  }
+
+  // ---------- HISTORY ----------
+  function saveHistory(rec){
+    const arr = JSON.parse(localStorage.getItem('ride_history_demo')||'[]');
+    arr.unshift(rec); localStorage.setItem('ride_history_demo', JSON.stringify(arr.slice(0,50)));
+  }
+  function renderHistory(){
+    const arr = JSON.parse(localStorage.getItem('ride_history_demo')||'[]');
+    ui.historyEl.innerHTML = '';
+    for(const r of arr){
+      const el = document.createElement('div'); el.className='history-item';
+      el.innerHTML = `<div style="display:flex;justify-content:space-between"><div style="font-weight:700">${r.pickup} → ${r.dropoff}</div><div style="color:#9fb0cc">${(new Date(r.timestamp)).toLocaleString()}</div></div>
+        <div style="margin-top:6px" class="muted">Xe: ${r.vehicle} • ${typeof r.distance === 'number' ? r.distance.toFixed(2) : r.distance} km • ${r.timeMin} min • Giá: ${r.price_k}</div>`;
+      ui.historyEl.appendChild(el);
+    }
+  }
+
+  // ---------- UI ACTIONS ----------
+  ui.swapBtn.addEventListener('click', ()=>{
+    const a = ui.pickupSearch.value; ui.pickupSearch.value = ui.dropoffSearch.value; ui.dropoffSearch.value = a;
+    const aLat = ui.pickupLat, aLon = ui.pickupLon;
+    ui.pickupLat = ui.dropoffLat; ui.pickupLon = ui.dropoffLon;
+    ui.dropoffLat = aLat; ui.dropoffLon = aLon;
+    if (pickupMarker && dropoffMarker){
+      const p = pickupMarker.getLatLng(), d = dropoffMarker.getLatLng();
+      pickupMarker.setLatLng(d); dropoffMarker.setLatLng(p);
+    }
+    computeRouteAndPrice();
+  });
+
+  ui.applyPromo.addEventListener('click', ()=> {
+    const code = (ui.promoCode.value||'').trim().toUpperCase();
+    if(!code) return alert('Nhập mã');
+    if(PROMOS[code]){ ui.currentPromo = PROMOS[code]; showNotif(`Áp dụng ${Math.round(PROMOS[code]*100)}%`); } else { ui.currentPromo=0; alert('Mã không hợp lệ'); }
+    computeRouteAndPrice();
+  });
+
+  ui.trafficRange.addEventListener('input', ()=>{ ui.trafficVal.textContent = ui.trafficRange.value; computeRouteAndPrice(); });
+
+  ui.routeBtn.addEventListener('click', computeRouteAndPrice);
+
+  ui.bookBtn.addEventListener('click', async ()=>{
+    if (!ui.pickupLat || !ui.dropoffLat) return alert('Chưa chọn điểm đón hoặc điểm đến.');
+    driverData = pickRandomDriver(ui.vehicleSelect.value);
+    ui.driverName.textContent = 'Tài xế: ' + driverData.name;
+    ui.driverCar.textContent = 'Xe: ' + driverData.car;
+    ui.driverPlate.textContent = 'Biển số: ' + driverData.plate;
+    ui.driverInfo.style.display = 'block';
+    showNotif('Tài xế đã được chỉ định (chưa gọi). Bấm "Gọi xe" để xác nhận.');
+    saveHistory({ timestamp: Date.now(), pickup: ui.pickupSearch.value||'—', dropoff: ui.dropoffSearch.value||'—', vehicle: ui.vehicleSelect.value, distance: parseFloat(ui.distKm.textContent)||0, timeMin: parseFloat(ui.timeMin.textContent)||0, price_k: ui.priceEst.textContent + ' (quote)'});
+    renderHistory();
+  });
+
+  ui.bookConfirmBtn.addEventListener('click', async ()=>{
+    if (!driverData) return alert('Chưa có tài xế. Bấm "Đặt xe" trước.');
+    try{
+      const pick = [ui.pickupLat, ui.pickupLon], drop = [ui.dropoffLat, ui.dropoffLon];
+      // get route pickup->drop
+      const routePD = await osrmRoute(pick, drop);
+      drawRoute(routePD.coords);
+      // get realistic driverStart -> pickup
+      const driverStart = [driverData.lat, driverData.lon];
+      let pathStartToPickup = [];
+      try{
+        const r1 = await osrmRoute(driverStart, pick);
+        pathStartToPickup = r1.coords;
+      }catch(e){
+        // fallback: use straight interpolation (we'll still concat)
+        pathStartToPickup = [driverStart, pick];
+      }
+      const fullPath = pathStartToPickup.concat(routePD.coords);
+      simulateDriverAlong(fullPath);
+      ui.driverName.textContent = 'Tài xế: ' + driverData.name + ' (đang đến)';
+    }catch(e){ alert('Lỗi khi gọi tài xế: ' + (e.message||e)); console.error(e); }
+  });
+
+  ui.cancelBtn.addEventListener('click', ()=>{
+    if (!bookingActive && !driverInterval && !driverMarker) { ui.driverInfo.style.display='none'; return; }
+    const reason = prompt('Nhập lý do hủy chuyến (ví dụ: Thay đổi kế hoạch, Giá cao, An toàn):');
+    stopDriverSimulation(reason || 'Người dùng hủy');
+  });
+
+  ui.clearHistory.addEventListener('click', ()=>{ localStorage.removeItem('ride_history_demo'); renderHistory(); });
+
+  async function computeRouteAndPrice(){
+    if (!ui.pickupLat || !ui.dropoffLat){
+      try{
+        if(!ui.pickupLat && ui.pickupSearch.value.includes(',')){
+          const [a,b]=ui.pickupSearch.value.split(',').map(x=>parseFloat(x.trim()));
+          ui.pickupLat=a; ui.pickupLon=b; setPickup([a,b]);
+        }
+        if(!ui.dropoffLat && ui.dropoffSearch.value.includes(',')){
+          const [a,b]=ui.dropoffSearch.value.split(',').map(x=>parseFloat(x.trim()));
+          ui.dropoffLat=a; ui.dropoffLon=b; setDropoff([a,b]);
+        }
+      }catch(e){}
+      if(!ui.pickupLat || !ui.dropoffLat) return alert('Chưa chọn điểm đón hoặc điểm đến. Dùng ô tìm kiếm hoặc click bản đồ (Shift+Click = pickup).');
+    }
+    ui.waitFeeEl.textContent = WAIT_FEE_PER_MIN + 'k';
+    try{
+      const pick = [ui.pickupLat, ui.pickupLon], drop = [ui.dropoffLat, ui.dropoffLon];
+      const route = await osrmRoute(pick, drop);
+      drawRoute(route.coords);
+      setPickup(pick); setDropoff(drop);
+      const promo = ui.currentPromo || 0;
+      const res = fuzzyPriceCalc(route.distance_km, route.duration_min, parseFloat(ui.trafficRange.value), ui.vehicleSelect.value, parseFloat(ui.waitMin.value)||0, promo);
+      ui.distKm.textContent = route.distance_km.toFixed(2);
+      ui.timeMin.textContent = route.duration_min.toFixed(0);
+      ui.priceEst.textContent = res.price_k.toFixed(2) + 'k';
+      ui.breakdown.innerHTML = `<div>Base fuzzy: <b>${res.baseCrisp.toFixed(2)}k</b> × vehMult(${res.vehMult}) = ${(res.baseCrisp*res.vehMult).toFixed(2)}k</div>
+        <div>Phí chờ: <b>${res.waitFee.toFixed(2)}k</b> (${ui.waitMin.value} phút)</div><div>Khuyến mãi: <b>${promo? (promo*100)+'%':'Không'}</b></div>`;
+      saveHistory({ timestamp: Date.now(), pickup: ui.pickupSearch.value, dropoff: ui.dropoffSearch.value, vehicle: ui.vehicleSelect.value, distance: route.distance_km, timeMin: route.duration_min, price_k: res.price_k + 'k (quote)'});
+      renderHistory();
+    }catch(e){ alert('Lỗi định tuyến: ' + (e.message||e)); console.error(e); }
+  }
+
+  function drawRoute(coords){
+    if (routeLine) map.removeLayer(routeLine);
+    routeLine = L.polyline(coords, { color:'#e53e3e', weight:4 }).addTo(map);
+    try{ map.fitBounds(routeLine.getBounds(), {padding:[40,40]}); }catch(e){}
+  }
+
+  // ---------- INIT ----------
+  renderHistory();
+  if (navigator.geolocation){
+    navigator.geolocation.getCurrentPosition(async pos=>{ const lat=pos.coords.latitude, lon=pos.coords.longitude; setPickup([lat,lon]); map.setView([lat,lon],14); }, ()=>{} );
+  }
+  </script>
+</body>
+</html>
