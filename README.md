@@ -42,7 +42,7 @@ Dự án này mô phỏng quy trình đặt xe tương tự Grab/Gojek/Be nhưng
    ```bash
    python -m http.server 8000
    ```
-##⚠️ Lưu ý
+## ⚠️ Lưu ý
 
 Đây chỉ là demo client-side, dùng public API (không có backend).
 
